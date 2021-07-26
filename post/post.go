@@ -1,4 +1,4 @@
-package hello
+package post
 
 import (
 	"context"
@@ -12,24 +12,37 @@ import (
 )
 
 type UserPost struct {
-	Title    string
-	Content  string
-	Id       int
-	Username string
+	Title    string `json:"title"`
+	Content  string `json:"content"`
+	Id       int    `json:"id"`
+	Username string `json:"username"`
 }
 
 type PostsResponse struct {
-	Posts []*UserPost
+	Posts []*UserPost `json:"posts"`
 }
 
 type AddPostRequest struct {
-	Title   string
-	Content string
+	Title   string `json:"title"`
+	Content string `json:"content"`
 }
 
 type AddPostResponse struct {
-	Id int
+	Id int `json:"id"`
 }
+
+func toPostListResponse(rows *sqldb.Rows) (*PostsResponse, error) {
+	posts := []*UserPost{}
+	for rows.Next() {
+		var post UserPost
+		if err := rows.Scan(&post.Id, &post.Title, &post.Content, &post.Username); err != nil {
+			return nil, fmt.Errorf("could not scan: %v", err)
+		}
+		posts = append(posts, &post)
+	}
+	return &PostsResponse{Posts: posts}, nil
+} 
+
 
 // encore:api public
 func GetPosts(ctx context.Context) (*PostsResponse, error) {
@@ -41,19 +54,7 @@ func GetPosts(ctx context.Context) (*PostsResponse, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	posts := []*UserPost{}
-	for rows.Next() {
-		var post UserPost
-		if err := rows.Scan(&post.Id, &post.Title, &post.Content, &post.Username); err != nil {
-			return nil, fmt.Errorf("could not scan: %v", err)
-		}
-		posts = append(posts, &post)
-	}
-
-	if err != nil {
-		return nil, err
-	}
-	return &PostsResponse{Posts: posts}, nil
+	return toPostListResponse(rows)
 }
 
 // encore:api auth
@@ -67,19 +68,7 @@ func GetMyPosts(ctx context.Context) (*PostsResponse, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	posts := []*UserPost{}
-	for rows.Next() {
-		var post UserPost
-		if err := rows.Scan(&post.Id, &post.Title, &post.Content, &post.Username); err != nil {
-			return nil, fmt.Errorf("could not scan: %v", err)
-		}
-		posts = append(posts, &post)
-	}
-
-	if err != nil {
-		return nil, err
-	}
-	return &PostsResponse{Posts: posts}, nil
+	return toPostListResponse(rows)
 }
 
 // encore:api auth
@@ -87,15 +76,21 @@ func AddPost(ctx context.Context, params *AddPostRequest) (*AddPostResponse, err
 	var id int
 	user_id, _ := auth.UserID()
 	authdata, _ := auth.Data().(*firebaseauth.AuthData)
-	rlog.Info("adding post", "name", authdata.Name)
-	err := sqldb.QueryRow(ctx, `
+	tx, _ := sqldb.Begin(ctx)
+	rlog.Info("add post", "name", authdata.Name)
+	_, err := sqldb.ExecTx(tx, ctx, `INSERT INTO public.user (id, name) values ($2, $1) ON CONFLICT (id) DO UPDATE SET name = $1;`, authdata.Name, user_id)
+	if err != nil {
+		return nil, err
+	}
+	err = sqldb.QueryRowTx(tx, ctx, `
         INSERT INTO public.post (title, content, user_id)
         VALUES ($1, $2, $3)
         RETURNING id
     `, params.Title, params.Content, user_id).Scan(&id)
-	_, err = sqldb.Exec(ctx, `UPDATE public.user SET name = $1 WHERE id = $2;`, authdata.Name, user_id)
 	if err != nil {
+		sqldb.Rollback(tx)
 		return nil, err
 	}
+	sqldb.Commit(tx)
 	return &AddPostResponse{Id: id}, nil
 }
