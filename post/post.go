@@ -78,6 +78,7 @@ func AddPost(ctx context.Context, params *AddPostRequest) (*AddPostResponse, err
 	authdata, _ := auth.Data().(*firebaseauth.AuthData)
 	tx, _ := sqldb.Begin(ctx)
 	rlog.Info("add post", "name", authdata.Name)
+	// hack to keep username in sync, this needs something more sophisticated
 	_, err := sqldb.ExecTx(tx, ctx, `INSERT INTO public.user (id, name) values ($2, $1) ON CONFLICT (id) DO UPDATE SET name = $1;`, authdata.Name, user_id)
 	if err != nil {
 		return nil, err

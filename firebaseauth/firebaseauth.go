@@ -1,3 +1,4 @@
+// Mostly copied from encore.dev docs
 package firebaseauth
 
 import (
